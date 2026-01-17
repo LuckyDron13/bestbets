@@ -157,9 +157,16 @@ public class PlaywrightWorker implements CommandLineRunner {
     String percent = safeText(arb.locator(".header .percent"));
     String percentClass = safeAttr(arb.locator(".header .percent"), "class");
     String sport = safeText(arb.locator(".header .sport-name"));
-    String updatedAt = safeText(arb.locator(".header .updated-at")); // "17 сек" / "2 минуты" / ...
 
-    return new ArbHeader(percent, percentClass, sport, updatedAt);
+    // 👇 период/карта/тайм и т.п.: "[2 карта]" / "[с ОТ]" / ...
+    String period = safeText(arb.locator(".header .arb-game-period span"));
+    if (period.isBlank()) {
+      period = safeText(arb.locator(".header .period-name"));
+    }
+
+    String updatedAt = safeText(arb.locator(".header .updated-at"));
+
+    return new ArbHeader(percent, percentClass, sport, period, updatedAt);
   }
 
   private List<BetLine> readBets(Locator arb) {
@@ -289,10 +296,17 @@ public class PlaywrightWorker implements CommandLineRunner {
     String event = bets.isEmpty() ? "" : nullToEmpty(bets.get(0).event);
     String league = bets.isEmpty() ? "" : nullToEmpty(bets.get(0).league);
     String date = bets.isEmpty() ? "" : nullToEmpty(bets.get(0).date);
+    String period = nullToEmpty(h.period);
 
     StringBuilder sb = new StringBuilder();
     sb.append("⚡️ ").append(emoji).append(" ").append(nullToEmpty(h.percent)).append(" | ")
-        .append(nullToEmpty(h.sport)).append(" | ").append(nullToEmpty(h.updatedAt)).append("\n");
+        .append(nullToEmpty(h.sport));
+
+    if (!period.isBlank()) {
+      sb.append(" ").append(period); // типа " [2 карта]"
+    }
+
+    sb.append(" | ").append(nullToEmpty(h.updatedAt)).append("\n");
 
     if (!event.isBlank()) sb.append("🏟 ").append(event).append("\n");
     if (!league.isBlank()) sb.append("🏷 ").append(league).append("\n");
@@ -311,10 +325,6 @@ public class PlaywrightWorker implements CommandLineRunner {
     // ✅ только чистая stake-ссылка (одна)
     if (stakeUrl != null && !stakeUrl.isBlank()) {
       sb.append("🎯 ").append(stakeUrl).append("\n");
-    }
-
-    if (arbHash != null && !arbHash.isBlank()) {
-      sb.append("id: ").append(arbHash);
     }
 
     return sb.toString().trim();
@@ -450,7 +460,7 @@ public class PlaywrightWorker implements CommandLineRunner {
   // DTOs
   // =========================
 
-  private record ArbHeader(String percent, String percentClass, String sport, String updatedAt) {}
+  private record ArbHeader(String percent, String percentClass, String sport, String period, String updatedAt) {}
 
   private record BetLine(
       String book,
