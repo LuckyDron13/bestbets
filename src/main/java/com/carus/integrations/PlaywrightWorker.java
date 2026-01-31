@@ -445,7 +445,6 @@ public class PlaywrightWorker implements CommandLineRunner {
             "--disable-gpu"
         )));
 
-
     context = browser.newContext();
 
     page = context.newPage();
@@ -548,16 +547,18 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   private String safeText(Locator loc) {
     try {
-      String t = loc.innerText();
+      if (loc == null || loc.count() == 0) return "";
+      String t = loc.first().textContent(new Locator.TextContentOptions().setTimeout(0));
       return t == null ? "" : t.trim();
     } catch (PlaywrightException e) {
       return "";
     }
   }
 
+
   private String safeAttr(Locator loc, String name) {
     try {
-      String v = loc.getAttribute(name);
+      String v = loc.getAttribute(name, new Locator.GetAttributeOptions().setTimeout(0));
       return v == null ? null : v.trim();
     } catch (PlaywrightException e) {
       return null;
