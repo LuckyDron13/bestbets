@@ -5,9 +5,7 @@ import java.math.RoundingMode;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.microsoft.playwright.Browser;
@@ -31,9 +29,11 @@ public class PlaywrightWorker implements CommandLineRunner {
   @Value("${abb.password}") private String password;
 
   private final TelegramSender telegramSender;
+  private final ArbHashDeduplicator arbHashDeduplicator;
 
-  public PlaywrightWorker(TelegramSender telegramSender) {
+  public PlaywrightWorker(TelegramSender telegramSender, ArbHashDeduplicator arbHashDeduplicator) {
     this.telegramSender = telegramSender;
+    this.arbHashDeduplicator = arbHashDeduplicator;
   }
 
   private Playwright pw;
@@ -47,7 +47,7 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   // === Settings ===
   private static final Duration NAV_TIMEOUT = Duration.ofSeconds(120);
-  private static final Duration LOOP_DELAY = Duration.ofSeconds(5); // скан каждую секунду
+  private static final Duration LOOP_DELAY = Duration.ofSeconds(5); // скан каждые 5 сек
   private static final Duration RESTART_DELAY = Duration.ofSeconds(10);
 
   private static final Duration RESOLVE_TIMEOUT = Duration.ofSeconds(15);
@@ -56,17 +56,6 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   // Банк под “равную вилку”
   private static final double TOTAL_BANKROLL_USD = 200.0;
-
-  // Отправляем только если "сек" + антиспам по arb_hash
-  private static final long SEND_COOLDOWN_MS = 70_000;
-  private static final int MAX_SENT_CACHE = 50_000;
-
-  // LRU: arb_hash -> lastSentAtMs
-  private final Map<String, Long> lastSentAtMs = new LinkedHashMap<>(16, 0.75f, true) {
-    @Override protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
-      return size() > MAX_SENT_CACHE;
-    }
-  };
 
   @Override
   public void run(String... args) {
@@ -145,7 +134,6 @@ public class PlaywrightWorker implements CommandLineRunner {
   private void scanArbsOnce() {
     Locator arbs = page.locator("#arbs-list ul.arbs-list > li.wrapper.arb.has-2-bets");
     int n = arbs.count();
-    System.out.println("arbs on page = " + n);
 
     for (int i = 0; i < n; i++) {
       Locator arb = arbs.nth(i);
@@ -408,7 +396,7 @@ public class PlaywrightWorker implements CommandLineRunner {
   }
 
   // =========================
-  // Filtering / Anti-spam
+  // Filtering / Dedup
   // =========================
 
   private boolean isSecondsUpdated(String updatedAt) {
@@ -417,17 +405,12 @@ public class PlaywrightWorker implements CommandLineRunner {
     return s.contains("сек");
   }
 
+  /**
+   * Отправляем только если "сек" и хеш еще не отправляли (или он протух по TTL внутри ArbHashDeduplicator).
+   */
   private boolean shouldSendToTelegram(String arbHash, String updatedAt) {
-    if (arbHash == null || arbHash.isBlank()) return false;
     if (!isSecondsUpdated(updatedAt)) return false;
-
-    long now = System.currentTimeMillis();
-    Long last = lastSentAtMs.get(arbHash);
-
-    if (last != null && (now - last) < SEND_COOLDOWN_MS) return false;
-
-    lastSentAtMs.put(arbHash, now);
-    return true;
+    return arbHashDeduplicator.tryAcquire(arbHash);
   }
 
   // =========================
@@ -554,7 +537,6 @@ public class PlaywrightWorker implements CommandLineRunner {
       return "";
     }
   }
-
 
   private String safeAttr(Locator loc, String name) {
     try {
