@@ -1,7 +1,8 @@
-abb:
-  email: waytothedream248@gmail.com
-  password: 7hs9y$yS9UL5Nzh
+spring:
+  main:
+    web-application-type: none
+  profiles:
+    active: prod   # ✅ дефолтный профиль
+
 tg:
-  bot-token: 8466653487:AAHskPxWn5VvsRYSyEEiyt1OfKdEg2dDoX8
-  chat-id: -5222312030
   api-base-url: https://api.telegram.org

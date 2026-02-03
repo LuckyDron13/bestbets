@@ -22,14 +22,31 @@ public class TelegramSender {
   private final RestTemplate telegramRestTemplate;
 
   /**
-   * Просто отправляет любой текст. Без parse_mode.
+   * Просто отправляет любой текст в дефолтный chat_id из props. Без parse_mode.
    */
   public void sendText(String text) {
-    sendText(text, true, false);
+    sendText(null, text, true, false);
   }
 
   public void sendText(String text, boolean disableWebPreview, boolean silent) {
+    sendText(null, text, disableWebPreview, silent);
+  }
+
+  /**
+   * Отправка в конкретный чат (если chatId == null/blank -> берём props.getChatId()).
+   */
+  public void sendText(String chatId, String text) {
+    sendText(chatId, text, true, false);
+  }
+
+  public void sendText(String chatId, String text, boolean disableWebPreview, boolean silent) {
     if (text == null || text.isBlank()) return;
+
+    String resolvedChatId = resolveChatId(chatId);
+    if (resolvedChatId == null || resolvedChatId.isBlank()) {
+      log.warn("Telegram chat_id пустой: передан={}, props.chatId={}", chatId, props.getChatId());
+      return;
+    }
 
     String url = UriComponentsBuilder
         .fromHttpUrl(props.getApiBaseUrl())          // обычно https://api.telegram.org
@@ -38,7 +55,7 @@ public class TelegramSender {
 
     // ВАЖНО: parse_mode вообще не шлём
     Map<String, Object> payload = new LinkedHashMap<>();
-    payload.put("chat_id", props.getChatId());
+    payload.put("chat_id", resolvedChatId);
     payload.put("text", text);
     payload.put("disable_web_page_preview", disableWebPreview);
     payload.put("disable_notification", silent);
@@ -58,22 +75,28 @@ public class TelegramSender {
           return;
         }
 
-        log.warn("Telegram send failed (attempt {}): status={}, body={}",
-            attempt, resp.getStatusCode(), safeTrim(resp.getBody()));
+        log.warn("Telegram send failed (attempt {}): chatId={}, status={}, body={}",
+            attempt, resolvedChatId, resp.getStatusCode(), safeTrim(resp.getBody()));
         sleepBackoff(attempt);
 
       } catch (HttpStatusCodeException e) {
-        log.warn("Telegram HTTP error (attempt {}): status={}, body={}",
-            attempt, e.getStatusCode(), safeTrim(e.getResponseBodyAsString()));
+        log.warn("Telegram HTTP error (attempt {}): chatId={}, status={}, body={}",
+            attempt, resolvedChatId, e.getStatusCode(), safeTrim(e.getResponseBodyAsString()));
         sleepBackoff(attempt);
 
       } catch (Exception e) {
-        log.warn("Telegram send exception (attempt {}): {}", attempt, e.getMessage(), e);
+        log.warn("Telegram send exception (attempt {}): chatId={}, {}",
+            attempt, resolvedChatId, e.getMessage(), e);
         sleepBackoff(attempt);
       }
     }
 
-    log.error("Telegram send окончательно не удалось после {} попыток", maxAttempts);
+    log.error("Telegram send окончательно не удалось после {} попыток (chatId={})", maxAttempts, resolvedChatId);
+  }
+
+  private String resolveChatId(String chatId) {
+    if (chatId != null && !chatId.isBlank()) return chatId.trim();
+    return props.getChatId();
   }
 
   private void sleepBackoff(int attempt) {

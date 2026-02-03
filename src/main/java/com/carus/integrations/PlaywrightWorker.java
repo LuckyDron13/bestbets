@@ -30,10 +30,16 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   private final TelegramSender telegramSender;
   private final ArbHashDeduplicator arbHashDeduplicator;
+  private final TelegramProperties tgProps;
 
-  public PlaywrightWorker(TelegramSender telegramSender, ArbHashDeduplicator arbHashDeduplicator) {
+  public PlaywrightWorker(
+      TelegramSender telegramSender,
+      ArbHashDeduplicator arbHashDeduplicator,
+      TelegramProperties tgProps
+  ) {
     this.telegramSender = telegramSender;
     this.arbHashDeduplicator = arbHashDeduplicator;
+    this.tgProps = tgProps;
   }
 
   private Playwright pw;
@@ -134,6 +140,7 @@ public class PlaywrightWorker implements CommandLineRunner {
   private void scanArbsOnce() {
     Locator arbs = page.locator("#arbs-list ul.arbs-list > li.wrapper.arb.has-2-bets");
     int n = arbs.count();
+    System.out.println("Found " + n + " arbs");
 
     for (int i = 0; i < n; i++) {
       Locator arb = arbs.nth(i);
@@ -153,7 +160,10 @@ public class PlaywrightWorker implements CommandLineRunner {
         stakeUrl = replaceStakeTo1073(stakeUrl);
 
         String message = buildTelegramMessage(header, betLines, arbHash, stakes, stakeUrl);
-        telegramSender.sendText(message);
+
+        // ✅ chatId берём из конфига tg.*
+        String chatId = selectChatId(betLines);
+        telegramSender.sendText(chatId, message);
 
         System.out.println(">>> SEND TO TG: " + arbHash + " | " + header.updatedAt);
       }
@@ -165,7 +175,6 @@ public class PlaywrightWorker implements CommandLineRunner {
     String percentClass = safeAttr(arb.locator(".header .percent"), "class");
     String sport = safeText(arb.locator(".header .sport-name"));
 
-    // период/карта/тайм: "[2 карта]" / "[с ОТ]" / ...
     String period = safeText(arb.locator(".header .arb-game-period span"));
     if (period.isBlank()) {
       period = safeText(arb.locator(".header .period-name"));
@@ -195,7 +204,6 @@ public class PlaywrightWorker implements CommandLineRunner {
     String market = safeText(bet.locator(".market a span"));
     String odd = safeText(bet.locator("a.coefficient-link"));
 
-    // ABB /bets/... (для резолва внешнего deep-link)
     String href = safeAttr(bet.locator(".market a"), "href");
     if (href == null || href.isBlank()) {
       href = safeAttr(bet.locator("a.coefficient-link"), "href");
@@ -218,10 +226,6 @@ public class PlaywrightWorker implements CommandLineRunner {
     return ABB_BASE + "/" + h;
   }
 
-  /**
-   * Идентификатор вилки — берём arb_hash из href любой ссылки внутри li:
-   * ...&arb_hash=fa7997516290f57f63c3afddf3670980
-   */
   private String extractArbHash(Locator arb) {
     Locator anyLink = arb.locator("a[href*='arb_hash=']").first();
     String href = anyLink.getAttribute("href");
@@ -237,14 +241,9 @@ public class PlaywrightWorker implements CommandLineRunner {
   }
 
   // =========================
-  // Equal stake calc (банк 200$)
+  // Equal stake calc
   // =========================
 
-  /**
-   * “Равная вилка” для 2 исходов:
-   * s1 = T*(1/o1) / ((1/o1)+(1/o2))
-   * s2 = T - s1
-   */
   private double[] calcEqualStakesUsd(List<BetLine> betLines, double total) {
     if (betLines == null || betLines.size() < 2) return null;
 
@@ -259,7 +258,7 @@ public class PlaywrightWorker implements CommandLineRunner {
 
     double s1 = total * inv1 / sum;
     s1 = round2(s1);
-    double s2 = round2(total - s1); // чтобы сумма была ровно total после округления
+    double s2 = round2(total - s1);
 
     return new double[] { s1, s2 };
   }
@@ -307,7 +306,6 @@ public class PlaywrightWorker implements CommandLineRunner {
   private String resolveExternalUrlFromAbbBetUrl(String abbBetUrl, AtomicReference<String> captureRef) {
     if (abbBetUrl == null || abbBetUrl.isBlank() || resolverPage == null) return null;
 
-    // сбрасываем именно ту “цель”, которую хотим поймать
     captureRef.set(null);
 
     try {
@@ -317,9 +315,7 @@ public class PlaywrightWorker implements CommandLineRunner {
               .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
               .setTimeout(RESOLVE_TIMEOUT.toMillis())
       );
-    } catch (PlaywrightException ignored) {
-      // abort/редиректы могут ронять navigate — это ок
-    }
+    } catch (PlaywrightException ignored) {}
 
     long end = System.currentTimeMillis() + RESOLVE_TIMEOUT.toMillis();
     while (System.currentTimeMillis() < end) {
@@ -375,7 +371,6 @@ public class PlaywrightWorker implements CommandLineRunner {
       sb.append("\n");
     }
 
-    // ✅ только “чистая” внешняя ссылка на Stake, если есть
     if (stakeUrl != null && !stakeUrl.isBlank()) {
       sb.append("🎯 Stake: ").append(stakeUrl).append("\n");
     }
@@ -405,9 +400,6 @@ public class PlaywrightWorker implements CommandLineRunner {
     return s.contains("сек");
   }
 
-  /**
-   * Отправляем только если "сек" и хеш еще не отправляли (или он протух по TTL внутри ArbHashDeduplicator).
-   */
   private boolean shouldSendToTelegram(String arbHash, String updatedAt) {
     if (!isSecondsUpdated(updatedAt)) return false;
     return arbHashDeduplicator.tryAcquire(arbHash);
@@ -433,14 +425,12 @@ public class PlaywrightWorker implements CommandLineRunner {
     page = context.newPage();
     resolverPage = context.newPage();
 
-    // === listeners on main page ===
     page.onConsoleMessage(m -> System.out.println("[console] " + m.text()));
     page.onRequestFailed(r -> System.out.println("[request failed] " + r.url()));
     page.onResponse(r -> {
       if (r.status() >= 400) System.out.println("[response " + r.status() + "] " + r.url());
     });
 
-    // === resolver: ловим stake document и abort, чтобы не уходить на букмекера ===
     resolverPage.route("**/*", route -> {
       String url = route.request().url();
       String type = route.request().resourceType();
@@ -453,7 +443,6 @@ public class PlaywrightWorker implements CommandLineRunner {
         }
       }
 
-      // ускоряем резолв: режем тяжёлое
       if ("image".equals(type) || "font".equals(type) || "media".equals(type)) {
         route.abort();
         return;
@@ -469,10 +458,6 @@ public class PlaywrightWorker implements CommandLineRunner {
     resolverPage.setDefaultNavigationTimeout(RESOLVE_TIMEOUT.toMillis());
   }
 
-  /**
-   * Меняет stake.com / www.stake.com -> stake1073.com, сохраняя path/query.
-   * Ничего не трогает для других доменов.
-   */
   private String replaceStakeTo1073(String url) {
     if (url == null || url.isBlank()) return url;
 
@@ -481,12 +466,10 @@ public class PlaywrightWorker implements CommandLineRunner {
       String host = uri.getHost();
       if (host == null) return url;
 
-      // уже зеркало
       if (host.equalsIgnoreCase("stake1073.com") || host.equalsIgnoreCase("www.stake1073.com")) {
         return url;
       }
 
-      // меняем только stake.com / www.stake.com
       if (!(host.equalsIgnoreCase("stake.com") || host.equalsIgnoreCase("www.stake.com"))) {
         return url;
       }
@@ -545,6 +528,26 @@ public class PlaywrightWorker implements CommandLineRunner {
     } catch (PlaywrightException e) {
       return null;
     }
+  }
+
+  // ✅ теперь чат берём из tg.* конфига
+  private String selectChatId(List<BetLine> betLines) {
+    String chatId = hasBook(betLines, "pinnacle")
+        ? tgProps.getPinnacleOnlyChatId()
+        : tgProps.getAllOthersChatId();
+
+    if (chatId == null || chatId.isBlank()) {
+      chatId = "-1"; // fallback (если задан)
+    }
+    return chatId;
+  }
+
+  private boolean hasBook(List<BetLine> betLines, String needle) {
+    if (betLines == null || betLines.isEmpty()) return false;
+    for (BetLine b : betLines) {
+      if (isBook(b.book, needle)) return true;
+    }
+    return false;
   }
 
   // =========================

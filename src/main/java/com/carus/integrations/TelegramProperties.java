@@ -1,27 +1,21 @@
 package com.carus.integrations;
 
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@Getter
-@Setter
+@Data
 @ConfigurationProperties(prefix = "tg")
 public class TelegramProperties {
 
-  /**
-   * Например: 123456789:AA.... (НЕ светить в логах)
-   */
+  private String apiBaseUrl;
   private String botToken;
 
-  /**
-   * Может быть "59395" или "-1001234567890" (для групп/каналов).
-   * Лучше хранить как String.
-   */
+  /** дефолтный чат (для sendText(text) без chatId) */
   private String chatId;
 
-  /**
-   * Можно не трогать.
-   */
-  private String apiBaseUrl = "https://api.telegram.org";
+  /** чат только для вилок с Pinnacle */
+  private String pinnacleOnlyChatId;
+
+  /** чат для всех остальных (без Pinnacle) */
+  private String allOthersChatId;
 }
