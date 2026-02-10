@@ -31,15 +31,17 @@ public class PlaywrightWorker implements CommandLineRunner {
   private final TelegramSender telegramSender;
   private final ArbHashDeduplicator arbHashDeduplicator;
   private final TelegramProperties tgProps;
+  private final WorkerControlService control;
 
-  public PlaywrightWorker(
-      TelegramSender telegramSender,
+
+  public PlaywrightWorker(TelegramSender telegramSender,
       ArbHashDeduplicator arbHashDeduplicator,
-      TelegramProperties tgProps
-  ) {
+      TelegramProperties tgProps,
+      WorkerControlService control) {
     this.telegramSender = telegramSender;
     this.arbHashDeduplicator = arbHashDeduplicator;
     this.tgProps = tgProps;
+    this.control = control;
   }
 
   private Playwright pw;
@@ -68,18 +70,31 @@ public class PlaywrightWorker implements CommandLineRunner {
   public void run(String... args) {
     while (true) {
       try {
+        // если уже в паузе — точно не держим сессию
+        if (control.isPaused()) safeClose();
+        while (control.isPaused()) Thread.sleep(1000);
+
         startBrowser();
         login();
         openArbsPage();
 
         while (true) {
+          if (control.isPaused()) {
+            safeClose();                 // ✅ отпускаем ABB-сессию
+            while (control.isPaused()) Thread.sleep(1000);
+            break;                       // после resume — стартанём заново
+          }
+
+          if (control.consumeRestart()) {
+            safeClose();
+            break;                       // перезапуск цикла (browser+login заново)
+          }
+
           scanArbsOnce();
           page.waitForTimeout(LOOP_DELAY.toMillis());
         }
 
       } catch (Exception e) {
-        System.err.println("Worker error: " + e.getMessage());
-        e.printStackTrace();
         safeClose();
         try { Thread.sleep(RESTART_DELAY.toMillis()); } catch (InterruptedException ignored) {}
       }
