@@ -66,7 +66,7 @@ public class ArbHashDeduplicator {
       Long last = sentAtMs.get(arbHash);
       long ageSec = (last == null) ? -1 : (now - last) / 1000;
       log.debug("DUPLICATE arb_hash={}, age={}s (skip)", arbHash, ageSec);
-      System.out.printf("DUPLICATE arb_hash=%s, age=%s (skip)%n", arbHash, ageSec);
+      //System.out.printf("DUPLICATE arb_hash=%s, age=%s (skip)%n", arbHash, ageSec);
 
     } else if (expired.get()) {
       log.info("arb_hash expired -> allow again: {}", arbHash);

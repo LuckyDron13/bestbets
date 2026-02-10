@@ -49,19 +49,20 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   // Отдельная вкладка для резолва внешних ссылок (тихо, без ухода на букмекера)
   private Page resolverPage;
-  private final AtomicReference<String> stakeCapture = new AtomicReference<>();
+
+  // Универсальный capture: поймали внешний document URL -> сюда
+  private final AtomicReference<String> externalCapture = new AtomicReference<>();
 
   // === Settings ===
   private static final Duration NAV_TIMEOUT = Duration.ofSeconds(120);
   private static final Duration LOOP_DELAY = Duration.ofSeconds(5); // скан каждые 5 сек
   private static final Duration RESTART_DELAY = Duration.ofSeconds(10);
-
   private static final Duration RESOLVE_TIMEOUT = Duration.ofSeconds(15);
 
   private static final String ABB_BASE = "https://www.allbestbets.com";
 
   // Банк под “равную вилку”
-  private static final double TOTAL_BANKROLL_USD = 200.0;
+  private static final double TOTAL_BANKROLL_USD = 100.0;
 
   @Override
   public void run(String... args) {
@@ -140,7 +141,7 @@ public class PlaywrightWorker implements CommandLineRunner {
   private void scanArbsOnce() {
     Locator arbs = page.locator("#arbs-list ul.arbs-list > li.wrapper.arb.has-2-bets");
     int n = arbs.count();
-    System.out.println("Found " + n + " arbs");
+    //System.out.println("Found " + n + " arbs");
 
     for (int i = 0; i < n; i++) {
       Locator arb = arbs.nth(i);
@@ -150,19 +151,18 @@ public class PlaywrightWorker implements CommandLineRunner {
 
       List<BetLine> betLines = readBets(arb);
 
-      if (shouldSendToTelegram(arbHash, header.updatedAt)) {
+      if (shouldSendToTelegram(arbHash)) {
 
         // 1) считаем “равную вилку” на банк 200$
         double[] stakes = calcEqualStakesUsd(betLines, TOTAL_BANKROLL_USD);
 
-        // 2) резолвим чистую ссылку на Stake (если есть Stake-линия)
-        String stakeUrl = resolveStakeUrlFromBetLines(betLines);
-        stakeUrl = replaceStakeTo1073(stakeUrl);
+        // 2) резолвим внешние ссылки ДЛЯ ОБЕИХ контор
+        List<BetLine> resolved = resolveAllExternalUrls(betLines);
 
-        String message = buildTelegramMessage(header, betLines, arbHash, stakes, stakeUrl);
+        String message = buildTelegramMessage(header, resolved, arbHash, stakes);
 
         // ✅ chatId берём из конфига tg.*
-        String chatId = selectChatId(betLines);
+        String chatId = selectChatId(resolved);
         telegramSender.sendText(chatId, message);
 
         System.out.println(">>> SEND TO TG: " + arbHash + " | " + header.updatedAt);
@@ -204,17 +204,23 @@ public class PlaywrightWorker implements CommandLineRunner {
     String market = safeText(bet.locator(".market a span"));
     String odd = safeText(bet.locator("a.coefficient-link"));
 
-    String href = safeAttr(bet.locator(".market a"), "href");
+    // ✅ ссылка может быть на BET-кнопке или на коэффициенте (a.coefficient-link)
+    String href = safeAttr(bet.locator(".bet-button a"), "href");
+
     if (href == null || href.isBlank()) {
       href = safeAttr(bet.locator("a.coefficient-link"), "href");
     }
+    if (href == null || href.isBlank()) {
+      href = safeAttr(bet.locator(".market a"), "href");
+    }
+
     String abbBetUrl = toAbsAbbUrl(href);
 
     String depth = null;
     Locator depthLoc = bet.locator(".market-dept");
     if (depthLoc.count() > 0) depth = safeText(depthLoc);
 
-    return new BetLine(book, date, event, league, market, odd, depth, abbBetUrl);
+    return new BetLine(book, date, event, league, market, odd, depth, abbBetUrl, null);
   }
 
   private String toAbsAbbUrl(String href) {
@@ -281,32 +287,28 @@ public class PlaywrightWorker implements CommandLineRunner {
   }
 
   // =========================
-  // Stake deep-link resolver
+  // Universal external resolver (ALL books)
   // =========================
 
-  private String resolveStakeUrlFromBetLines(List<BetLine> betLines) {
-    if (betLines == null) return null;
+  private List<BetLine> resolveAllExternalUrls(List<BetLine> betLines) {
+    if (betLines == null || betLines.isEmpty()) return betLines;
+
+    List<BetLine> out = new ArrayList<>(betLines.size());
     for (BetLine b : betLines) {
-      if (isBook(b.book, "stake")) {
-        String url = resolveStakeUrlFromAbbBetUrl(b.abbBetUrl);
-        if (url != null && !url.isBlank()) return url;
-      }
+      String resolved = resolveExternalUrlFromAbbBetUrl(b.abbBetUrl);
+      resolved = normalizeResolvedUrl(b.book, resolved);
+
+      out.add(new BetLine(
+          b.book, b.date, b.event, b.league, b.market, b.odd, b.depth, b.abbBetUrl, resolved
+      ));
     }
-    return null;
+    return out;
   }
 
-  private boolean isBook(String book, String needle) {
-    return book != null && book.toLowerCase().contains(needle);
-  }
-
-  private String resolveStakeUrlFromAbbBetUrl(String abbBetUrl) {
-    return resolveExternalUrlFromAbbBetUrl(abbBetUrl, stakeCapture);
-  }
-
-  private String resolveExternalUrlFromAbbBetUrl(String abbBetUrl, AtomicReference<String> captureRef) {
+  private String resolveExternalUrlFromAbbBetUrl(String abbBetUrl) {
     if (abbBetUrl == null || abbBetUrl.isBlank() || resolverPage == null) return null;
 
-    captureRef.set(null);
+    externalCapture.set(null);
 
     try {
       resolverPage.navigate(
@@ -319,12 +321,28 @@ public class PlaywrightWorker implements CommandLineRunner {
 
     long end = System.currentTimeMillis() + RESOLVE_TIMEOUT.toMillis();
     while (System.currentTimeMillis() < end) {
-      String got = captureRef.get();
+      String got = externalCapture.get();
       if (got != null && !got.isBlank()) return got;
       try { resolverPage.waitForTimeout(100); } catch (Exception ignored) {}
     }
 
-    return captureRef.get();
+    return externalCapture.get();
+  }
+
+  private boolean isAbbUrl(String url) {
+    if (url == null) return false;
+    String u = url.toLowerCase();
+    return u.contains("allbestbets.com");
+  }
+
+  private String normalizeResolvedUrl(String book, String url) {
+    if (url == null || url.isBlank()) return url;
+
+    // спец-правило только для Stake
+    if (book != null && book.toLowerCase().contains("stake")) {
+      return replaceStakeTo1073(url);
+    }
+    return url;
   }
 
   // =========================
@@ -335,8 +353,7 @@ public class PlaywrightWorker implements CommandLineRunner {
       ArbHeader h,
       List<BetLine> bets,
       String arbHash,
-      double[] stakes,
-      String stakeUrl
+      double[] stakes
   ) {
     String emoji = headerEmoji(h.percentClass);
 
@@ -371,8 +388,11 @@ public class PlaywrightWorker implements CommandLineRunner {
       sb.append("\n");
     }
 
-    if (stakeUrl != null && !stakeUrl.isBlank()) {
-      sb.append("🎯 Stake: ").append(stakeUrl).append("\n");
+    // ✅ ссылки на обе конторы (и любые другие)
+    for (BetLine b : bets) {
+      if (b.resolvedUrl != null && !b.resolvedUrl.isBlank()) {
+        sb.append("🎯 ").append(nullToEmpty(b.book)).append(": ").append(b.resolvedUrl).append("\n");
+      }
     }
 
     return sb.toString().trim();
@@ -394,14 +414,9 @@ public class PlaywrightWorker implements CommandLineRunner {
   // Filtering / Dedup
   // =========================
 
-  private boolean isSecondsUpdated(String updatedAt) {
-    if (updatedAt == null) return false;
-    String s = updatedAt.toLowerCase().trim();
-    return s.contains("сек");
-  }
 
-  private boolean shouldSendToTelegram(String arbHash, String updatedAt) {
-    if (!isSecondsUpdated(updatedAt)) return false;
+  private boolean shouldSendToTelegram(String arbHash) {
+    if (arbHash == null || arbHash.isBlank()) return false;
     return arbHashDeduplicator.tryAcquire(arbHash);
   }
 
@@ -431,13 +446,14 @@ public class PlaywrightWorker implements CommandLineRunner {
       if (r.status() >= 400) System.out.println("[response " + r.status() + "] " + r.url());
     });
 
+    // Универсальный перехват: как только resolverPage уходит на внешний document — сохраняем и abort
     resolverPage.route("**/*", route -> {
       String url = route.request().url();
       String type = route.request().resourceType();
 
       if ("document".equals(type)) {
-        if (url.contains("stake.com")) {
-          stakeCapture.compareAndSet(null, url);
+        if (url != null && !isAbbUrl(url)) {
+          externalCapture.compareAndSet(null, url);
           route.abort();
           return;
         }
@@ -523,7 +539,8 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   private String safeAttr(Locator loc, String name) {
     try {
-      String v = loc.getAttribute(name, new Locator.GetAttributeOptions().setTimeout(0));
+      if (loc == null || loc.count() == 0) return null;
+      String v = loc.first().getAttribute(name, new Locator.GetAttributeOptions().setTimeout(0));
       return v == null ? null : v.trim();
     } catch (PlaywrightException e) {
       return null;
@@ -532,12 +549,22 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   // ✅ теперь чат берём из tg.* конфига
   private String selectChatId(List<BetLine> betLines) {
-    String chatId = hasBook(betLines, "pinnacle")
-        ? tgProps.getPinnacleOnlyChatId()
-        : tgProps.getAllOthersChatId();
+    String chatId;
 
+    System.out.println(betLines.get(0).book + " " + betLines.get(1).book);
+    if (hasBook(betLines, "game")) {
+      chatId = tgProps.getBcGameChatId();
+    } else if (hasBook(betLines, "pinnacle")) {
+      chatId = tgProps.getPinnacleOnlyChatId();
+    } else {
+      chatId = tgProps.getAllOthersChatId();
+    }
+
+    // fallback
     if (chatId == null || chatId.isBlank()) {
-      chatId = "-1"; // fallback (если задан)
+      chatId = (tgProps.getChatId() != null && !tgProps.getChatId().isBlank())
+          ? tgProps.getChatId()
+          : "-1";
     }
     return chatId;
   }
@@ -548,6 +575,10 @@ public class PlaywrightWorker implements CommandLineRunner {
       if (isBook(b.book, needle)) return true;
     }
     return false;
+  }
+
+  private boolean isBook(String book, String needle) {
+    return book != null && book.toLowerCase().contains(needle);
   }
 
   // =========================
@@ -564,6 +595,7 @@ public class PlaywrightWorker implements CommandLineRunner {
       String market,
       String odd,
       String depth,
-      String abbBetUrl
+      String abbBetUrl,
+      String resolvedUrl
   ) {}
 }

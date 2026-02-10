@@ -18,4 +18,5 @@ public class TelegramProperties {
 
   /** чат для всех остальных (без Pinnacle) */
   private String allOthersChatId;
+  private String bcGameChatId;
 }
