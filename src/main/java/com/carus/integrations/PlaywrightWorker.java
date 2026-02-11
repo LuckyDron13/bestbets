@@ -391,7 +391,7 @@ public class PlaywrightWorker implements CommandLineRunner {
     for (int i = 0; i < bets.size(); i++) {
       BetLine b = bets.get(i);
       sb.append(i + 1).append(") ")
-          .append(nullToEmpty(b.book)).append(" — ")
+          .append(nullToEmpty(displayBook(b.book))).append(" — ")
           .append(nullToEmpty(b.market)).append(" @ ")
           .append(nullToEmpty(b.odd));
 
@@ -406,12 +406,18 @@ public class PlaywrightWorker implements CommandLineRunner {
     // ✅ ссылки на обе конторы (и любые другие)
     for (BetLine b : bets) {
       if (b.resolvedUrl != null && !b.resolvedUrl.isBlank()) {
-        sb.append("🎯 ").append(nullToEmpty(b.book)).append(": ").append(b.resolvedUrl).append("\n");
+        sb.append("🎯 ").append(nullToEmpty(displayBook(b.book))).append(": ").append(b.resolvedUrl).append("\n");
       }
     }
 
     return sb.toString().trim();
   }
+
+  private String displayBook(String book) {
+    // точку меняем на пробел, лишние пробелы схлопываем
+    return nullToEmpty(book).replace('.', ' ').replaceAll("\\s+", " ").trim();
+  }
+
 
   private String headerEmoji(String percentClass) {
     String c = (percentClass == null ? "" : percentClass).toLowerCase();
@@ -567,10 +573,10 @@ public class PlaywrightWorker implements CommandLineRunner {
     String chatId;
 
     System.out.println(betLines.get(0).book + " " + betLines.get(1).book);
-    if (hasBook(betLines, "game")) {
-      chatId = tgProps.getBcGameChatId();
-    } else if (hasBook(betLines, "pinnacle")) {
-      chatId = tgProps.getPinnacleOnlyChatId();
+    if (hasBook(betLines, "game") && hasBook(betLines, "pinnacle")) {
+      chatId = tgProps.getBcGamePinnacleChatId();
+    } else if (hasBook(betLines, "pinnacle") && hasBook(betLines, "stake")) {
+      chatId = tgProps.getPinnacleStakeOnlyChatId();
     } else {
       chatId = tgProps.getAllOthersChatId();
     }

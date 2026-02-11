@@ -5,7 +5,7 @@ abb:
 tg:
   bot-token: 8503619675:AAEmjCI7O5HqBP7cMbrQh5NieYFnRcIOUVU
 
-  pinnacle-only-chat-id: -1003635285069
+  pinnacle-stake-only-chat-id: -1003635285069
   all-others-chat-id: -1003784513956
-  bc-game-chat-id: -1003733983370
+  bc-game-pinnacle-chat-id: -1003733983370
 
