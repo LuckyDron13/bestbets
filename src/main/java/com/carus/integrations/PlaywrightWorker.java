@@ -353,10 +353,6 @@ public class PlaywrightWorker implements CommandLineRunner {
   private String normalizeResolvedUrl(String book, String url) {
     if (url == null || url.isBlank()) return url;
 
-    // спец-правило только для Stake
-    if (book != null && book.toLowerCase().contains("stake")) {
-      return replaceStakeTo1073(url);
-    }
     return url;
   }
 
@@ -493,38 +489,6 @@ public class PlaywrightWorker implements CommandLineRunner {
 
     resolverPage.setDefaultTimeout(RESOLVE_TIMEOUT.toMillis());
     resolverPage.setDefaultNavigationTimeout(RESOLVE_TIMEOUT.toMillis());
-  }
-
-  private String replaceStakeTo1073(String url) {
-    if (url == null || url.isBlank()) return url;
-
-    try {
-      URI uri = URI.create(url);
-      String host = uri.getHost();
-      if (host == null) return url;
-
-      if (host.equalsIgnoreCase("stake1073.com") || host.equalsIgnoreCase("www.stake1073.com")) {
-        return url;
-      }
-
-      if (!(host.equalsIgnoreCase("stake.com") || host.equalsIgnoreCase("www.stake.com"))) {
-        return url;
-      }
-
-      URI replaced = new URI(
-          uri.getScheme(),
-          uri.getUserInfo(),
-          "stake1073.com",
-          uri.getPort(),
-          uri.getPath(),
-          uri.getQuery(),
-          uri.getFragment()
-      );
-
-      return replaced.toString();
-    } catch (Exception e) {
-      return url;
-    }
   }
 
   @PreDestroy
