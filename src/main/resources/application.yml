@@ -6,3 +6,9 @@ spring:
 
 tg:
   api-base-url: https://api.telegram.org
+
+# Bet executor integration — disabled by default
+# Set enabled: true and fill url in application-prod.yml to activate
+bet-executor:
+  enabled: false
+  url: http://localhost:8081

@@ -8,3 +8,8 @@ tg:
   pinnacle-stake-only-chat-id: -5222312030
   all-others-chat-id: -1003365303378
   bc-game-pinnacle-chat-id: -1003471823022
+
+# Bet executor integration
+bet-executor:
+  enabled: true
+  url: http://localhost:8081

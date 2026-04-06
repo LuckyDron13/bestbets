@@ -63,6 +63,18 @@
       <artifactId>telegrambots-client</artifactId>
       <version>9.3.0</version>
     </dependency>
+      <!-- Validation (jakarta.validation annotations: @NotBlank, @NotNull, etc.) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- ConfigurationProperties annotation processor -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-configuration-processor</artifactId>
+      <optional>true</optional>
+    </dependency>
 
   </dependencies>
 
