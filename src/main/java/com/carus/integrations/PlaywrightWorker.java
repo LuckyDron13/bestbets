@@ -32,16 +32,19 @@ public class PlaywrightWorker implements CommandLineRunner {
   private final ArbHashDeduplicator arbHashDeduplicator;
   private final TelegramProperties tgProps;
   private final WorkerControlService control;
+  private final BetExecutorClient betExecutorClient;
 
 
   public PlaywrightWorker(TelegramSender telegramSender,
       ArbHashDeduplicator arbHashDeduplicator,
       TelegramProperties tgProps,
-      WorkerControlService control) {
+      WorkerControlService control,
+      BetExecutorClient betExecutorClient) {
     this.telegramSender = telegramSender;
     this.arbHashDeduplicator = arbHashDeduplicator;
     this.tgProps = tgProps;
     this.control = control;
+    this.betExecutorClient = betExecutorClient;
   }
 
   private Playwright pw;
@@ -181,8 +184,43 @@ public class PlaywrightWorker implements CommandLineRunner {
         telegramSender.sendText(chatId, message);
 
         System.out.println(">>> SEND TO TG: " + arbHash + " | " + header.updatedAt);
+
+        // отправляем Stake-ставку на экзакьютор (не влияет на TG-поток)
+        sendToExecutorIfStake(resolved, stakes);
       }
     }
+  }
+
+  private void sendToExecutorIfStake(List<BetLine> betLines, double[] stakes) {
+    if (betLines == null) return;
+    for (int i = 0; i < betLines.size(); i++) {
+      BetLine b = betLines.get(i);
+      if (!isBook(b.book, "stake")) continue;
+
+      if (b.resolvedUrl == null || b.resolvedUrl.isBlank()) {
+        System.out.println("[executor] Stake bet found but no resolved URL, skipping");
+        return;
+      }
+
+      String event = betLines.get(0).event;
+      BigDecimal odds = parseOddBD(b.odd);
+      BigDecimal amount = (stakes != null && i < stakes.length)
+          ? BigDecimal.valueOf(stakes[i]).setScale(2, RoundingMode.HALF_UP)
+          : null;
+
+      if (odds == null || amount == null) {
+        System.out.println("[executor] Cannot parse odds/amount for Stake bet, skipping");
+        return;
+      }
+
+      betExecutorClient.sendBetSignal(event, b.market, odds, amount, b.resolvedUrl);
+      return;
+    }
+  }
+
+  private BigDecimal parseOddBD(String oddText) {
+    Double d = parseOdd(oddText);
+    return d == null ? null : BigDecimal.valueOf(d).setScale(2, RoundingMode.HALF_UP);
   }
 
   private ArbHeader readHeader(Locator arb) {
