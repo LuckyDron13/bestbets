@@ -12,4 +12,4 @@ tg:
 # Bet executor integration
 bet-executor:
   enabled: true
-  url: http://localhost:8081
+  url: http://host.docker.internal:8081

@@ -1,0 +1,7 @@
+services:
+  bestbets:
+    build: .
+    container_name: bestbets
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
