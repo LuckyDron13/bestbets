@@ -3,8 +3,11 @@ package com.carus.integrations;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -92,6 +95,53 @@ public class TelegramSender {
     }
 
     log.error("Telegram send окончательно не удалось после {} попыток (chatId={})", maxAttempts, resolvedChatId);
+  }
+
+  public void sendPhoto(String chatId, byte[] imageBytes, String caption) {
+    String resolvedChatId = resolveChatId(chatId);
+    if (resolvedChatId == null || resolvedChatId.isBlank()) {
+      log.warn("Telegram chat_id пустой, sendPhoto пропущен");
+      return;
+    }
+
+    String url = UriComponentsBuilder
+        .fromHttpUrl(props.getApiBaseUrl())
+        .pathSegment("bot" + props.getBotToken(), "sendPhoto")
+        .toUriString();
+
+    ByteArrayResource imageResource = new ByteArrayResource(imageBytes) {
+      @Override public String getFilename() { return "screenshot.png"; }
+    };
+
+    MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+    body.add("chat_id", resolvedChatId);
+    body.add("photo", imageResource);
+    if (caption != null && !caption.isBlank()) body.add("caption", caption);
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+    HttpEntity<MultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
+
+    int maxAttempts = 4;
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        ResponseEntity<String> resp =
+            telegramRestTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+        if (resp.getStatusCode().is2xxSuccessful()) return;
+        log.warn("Telegram sendPhoto failed (attempt {}): status={}", attempt, resp.getStatusCode());
+        sleepBackoff(attempt);
+      } catch (HttpStatusCodeException e) {
+        log.warn("Telegram sendPhoto HTTP error (attempt {}): status={}, body={}",
+            attempt, e.getStatusCode(), safeTrim(e.getResponseBodyAsString()));
+        sleepBackoff(attempt);
+      } catch (Exception e) {
+        log.warn("Telegram sendPhoto exception (attempt {}): {}", attempt, e.getMessage(), e);
+        sleepBackoff(attempt);
+      }
+    }
+
+    log.error("Telegram sendPhoto окончательно не удалось после {} попыток", maxAttempts);
   }
 
   private String resolveChatId(String chatId) {

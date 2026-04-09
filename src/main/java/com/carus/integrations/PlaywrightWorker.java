@@ -116,6 +116,15 @@ public class PlaywrightWorker implements CommandLineRunner {
             .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
             .setTimeout(NAV_TIMEOUT.toMillis())
     );
+
+    System.out.println("Login successful: " + page.url());
+
+    try {
+      byte[] screenshot = page.screenshot(new Page.ScreenshotOptions().setFullPage(false));
+      telegramSender.sendPhoto("-1003365303378", screenshot, "✅ Login successful");
+    } catch (Exception e) {
+      System.out.println("Screenshot/TG send failed: " + e.getMessage());
+    }
   }
 
   private void login() {
@@ -483,15 +492,12 @@ public class PlaywrightWorker implements CommandLineRunner {
     pw = Playwright.create();
 
     browser = pw.chromium().launch(new BrowserType.LaunchOptions()
-        .setHeadless(false));
-
-/*    browser = pw.chromium().launch(new BrowserType.LaunchOptions()
         .setHeadless(true)
         .setArgs(List.of(
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu"
-        )));*/
+        )));
 
     context = browser.newContext();
 
