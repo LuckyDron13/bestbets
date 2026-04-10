@@ -98,6 +98,8 @@ public class PlaywrightWorker implements CommandLineRunner {
         }
 
       } catch (Exception e) {
+        System.out.println("[CRASH] Worker crashed, restarting in " + RESTART_DELAY.toSeconds() + "s. Cause: " + e);
+        e.printStackTrace();
         safeClose();
         try { Thread.sleep(RESTART_DELAY.toMillis()); } catch (InterruptedException ignored) {}
       }
