@@ -16,7 +16,9 @@ public class TelegramProperties {
   /** чат только для вилок с Pinnacle */
   private String pinnacleStakeOnlyChatId;
 
-  /** чат для всех остальных (без Pinnacle) */
+  /** чат для всех остальных (без Pinnacle и без bc.game) */
   private String allOthersChatId;
-  private String bcGamePinnacleChatId;
+
+  /** чат для любых вилок с bc.game */
+  private String bcGameChatId;
 }

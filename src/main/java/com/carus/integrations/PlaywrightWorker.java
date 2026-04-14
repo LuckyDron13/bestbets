@@ -586,8 +586,8 @@ public class PlaywrightWorker implements CommandLineRunner {
     String chatId;
 
     System.out.println(betLines.get(0).book + " " + betLines.get(1).book);
-    if (hasBook(betLines, "game") && hasBook(betLines, "pinnacle")) {
-      chatId = tgProps.getBcGamePinnacleChatId();
+    if (hasBook(betLines, "game")) {
+      chatId = tgProps.getBcGameChatId();
     } else if (hasBook(betLines, "pinnacle") && hasBook(betLines, "stake")) {
       chatId = tgProps.getPinnacleStakeOnlyChatId();
     } else {
