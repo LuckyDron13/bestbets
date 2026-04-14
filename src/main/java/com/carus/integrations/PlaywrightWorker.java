@@ -386,38 +386,11 @@ public class PlaywrightWorker implements CommandLineRunner {
     long end = System.currentTimeMillis() + RESOLVE_TIMEOUT.toMillis();
     while (System.currentTimeMillis() < end) {
       String got = externalCapture.get();
-      if (got != null && !got.isBlank()) {
-        // bc.game даёт сначала generic /en/bti — ждём SPA-навигации до конкретного матча
-        if (got.contains("bc.game")) {
-          return waitForBcGameEventUrl(got, end);
-        }
-        return got;
-      }
+      if (got != null && !got.isBlank()) return got;
       try { resolverPage.waitForTimeout(100); } catch (Exception ignored) {}
     }
 
     return externalCapture.get();
-  }
-
-  /** Ждём пока bc.game SPA-навигация поменяет URL на более специфичный (с ID матча). */
-  private String waitForBcGameEventUrl(String landingUrl, long deadline) {
-    while (System.currentTimeMillis() < deadline) {
-      try {
-        String current = resolverPage.url();
-        if (current != null && !current.isBlank()
-            && !current.equals(landingUrl)
-            && !isAbbUrl(current)) {
-          return current;
-        }
-      } catch (Exception ignored) {}
-      try { Thread.sleep(200); } catch (InterruptedException ignored) {}
-    }
-    // Fallback: возвращаем что есть на странице (пусть даже generic)
-    try {
-      String current = resolverPage.url();
-      if (current != null && !current.isBlank() && !isAbbUrl(current)) return current;
-    } catch (Exception ignored) {}
-    return landingUrl;
   }
 
   private boolean isAbbUrl(String url) {
@@ -547,12 +520,7 @@ public class PlaywrightWorker implements CommandLineRunner {
       if ("document".equals(type)) {
         if (url != null && !isAbbUrl(url)) {
           externalCapture.compareAndSet(null, url);
-          if (url.contains("bc.game")) {
-            // Пускаем загрузку: bc.game использует SPA — URL сменится на конкретный матч
-            route.resume();
-          } else {
-            route.abort();
-          }
+          route.abort();
           return;
         }
       }
