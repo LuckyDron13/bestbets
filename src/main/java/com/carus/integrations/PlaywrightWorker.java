@@ -3,6 +3,9 @@ package com.carus.integrations;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,6 +18,7 @@ import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
+import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.WaitUntilState;
 import jakarta.annotation.PreDestroy;
@@ -27,6 +31,7 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   @Value("${abb.email}") private String email;
   @Value("${abb.password}") private String password;
+  @Value("${bc-game.session-cookies:}") private String bcGameCookies;
 
   private final TelegramSender telegramSender;
   private final ArbHashDeduplicator arbHashDeduplicator;
@@ -66,8 +71,9 @@ public class PlaywrightWorker implements CommandLineRunner {
 
   private static final String ABB_BASE = "https://www.allbestbets.com";
 
-  // Банк под “равную вилку”
+  // Банк под "равную вилку"
   private static final double TOTAL_BANKROLL_USD = 100.0;
+  private static final Path SESSION_FILE = Paths.get("/app/session.json");
 
   @Override
   public void run(String... args) {
@@ -78,8 +84,11 @@ public class PlaywrightWorker implements CommandLineRunner {
         while (control.isPaused()) Thread.sleep(1000);
 
         startBrowser();
-        login();
-        openArbsPage();
+        if (!tryOpenArbsWithSession()) {
+          login();
+          saveSession();
+          openArbsPage();
+        }
 
         while (true) {
           if (control.isPaused()) {
@@ -126,6 +135,46 @@ public class PlaywrightWorker implements CommandLineRunner {
       telegramSender.sendPhoto("-1003365303378", screenshot, "✅ Login successful");
     } catch (Exception e) {
       System.out.println("Screenshot/TG send failed: " + e.getMessage());
+    }
+  }
+
+  /** Пробуем открыть arbs с сохранённой сессией. Возвращает true если сессия жива. */
+  private boolean tryOpenArbsWithSession() {
+    if (!Files.exists(SESSION_FILE)) {
+      System.out.println("[session] No saved session, will login");
+      return false;
+    }
+    try {
+      page.navigate(
+          "https://www.allbestbets.com/arbs",
+          new Page.NavigateOptions()
+              .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
+              .setTimeout(NAV_TIMEOUT.toMillis())
+      );
+      if (page.url().contains("/users/sign_in")) {
+        System.out.println("[session] Session expired, will re-login");
+        return false;
+      }
+      System.out.println("[session] Session valid, skipped login: " + page.url());
+      try {
+        byte[] screenshot = page.screenshot(new Page.ScreenshotOptions().setFullPage(false));
+        telegramSender.sendPhoto("-1003365303378", screenshot, "✅ Resumed with saved session");
+      } catch (Exception e) {
+        System.out.println("Screenshot/TG send failed: " + e.getMessage());
+      }
+      return true;
+    } catch (Exception e) {
+      System.out.println("[session] Session check failed: " + e.getMessage());
+      return false;
+    }
+  }
+
+  private void saveSession() {
+    try {
+      context.storageState(new BrowserContext.StorageStateOptions().setPath(SESSION_FILE));
+      System.out.println("[session] Session saved to " + SESSION_FILE);
+    } catch (Exception e) {
+      System.out.println("[session] Failed to save session: " + e.getMessage());
     }
   }
 
@@ -182,7 +231,7 @@ public class PlaywrightWorker implements CommandLineRunner {
 
       if (shouldSendToTelegram(arbHash)) {
 
-        // 1) считаем “равную вилку” на банк 200$
+        // 1) считаем "равную вилку" на банк 200$
         double[] stakes = calcEqualStakesUsd(betLines, TOTAL_BANKROLL_USD);
 
         // 2) резолвим внешние ссылки ДЛЯ ОБЕИХ контор
@@ -373,6 +422,7 @@ public class PlaywrightWorker implements CommandLineRunner {
     if (abbBetUrl == null || abbBetUrl.isBlank() || resolverPage == null) return null;
 
     externalCapture.set(null);
+    System.out.println("[resolver] navigating to ABB url: " + abbBetUrl);
 
     try {
       resolverPage.navigate(
@@ -391,6 +441,21 @@ public class PlaywrightWorker implements CommandLineRunner {
     }
 
     return externalCapture.get();
+  }
+
+  /** Парсит строку вида "name1=val1; name2=val2" в список Playwright Cookie для домена. */
+  private List<Cookie> parseCookieString(String raw, String domain) {
+    List<Cookie> result = new ArrayList<>();
+    for (String part : raw.split(";")) {
+      String trimmed = part.trim();
+      if (trimmed.isEmpty()) continue;
+      int eq = trimmed.indexOf('=');
+      if (eq < 0) continue;
+      String name = trimmed.substring(0, eq).trim();
+      String value = trimmed.substring(eq + 1).trim();
+      result.add(new Cookie(name, value).setDomain(domain).setPath("/"));
+    }
+    return result;
   }
 
   private boolean isAbbUrl(String url) {
@@ -501,10 +566,21 @@ public class PlaywrightWorker implements CommandLineRunner {
             "--disable-gpu"
         )));
 
-    context = browser.newContext();
+    if (Files.exists(SESSION_FILE)) {
+      System.out.println("[session] Loading saved session from " + SESSION_FILE);
+      context = browser.newContext(new Browser.NewContextOptions().setStorageStatePath(SESSION_FILE));
+    } else {
+      context = browser.newContext();
+    }
 
     page = context.newPage();
     resolverPage = context.newPage();
+
+    if (bcGameCookies != null && !bcGameCookies.isBlank()) {
+      List<Cookie> cookies = parseCookieString(bcGameCookies, "bc.game");
+      context.addCookies(cookies);
+      System.out.println("[bc.game] Loaded " + cookies.size() + " session cookies");
+    }
 
     page.onConsoleMessage(m -> System.out.println("[console] " + m.text()));
     page.onRequestFailed(r -> System.out.println("[request failed] " + r.url()));
@@ -519,6 +595,7 @@ public class PlaywrightWorker implements CommandLineRunner {
 
       if ("document".equals(type)) {
         if (url != null && !isAbbUrl(url)) {
+          System.out.println("[resolver] document redirect -> " + url);
           externalCapture.compareAndSet(null, url);
           route.abort();
           return;

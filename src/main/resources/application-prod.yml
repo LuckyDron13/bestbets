@@ -9,6 +9,11 @@ tg:
   all-others-chat-id: -1003365303378
   bc-game-chat-id: -5068460691
 
+bc-game:
+  # Вставь сюда cookies из браузера (DevTools -> Application -> Cookies -> bc.game)
+  # Формат: "name1=value1; name2=value2; ..."
+  session-cookies: ""
+
 # Bet executor integration
 bet-executor:
   enabled: true
