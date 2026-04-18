@@ -559,7 +559,7 @@ public class PlaywrightWorker implements CommandLineRunner {
     pw = Playwright.create();
 
     browser = pw.chromium().launch(new BrowserType.LaunchOptions()
-        .setHeadless(true)
+        .setHeadless(false)
         .setArgs(List.of(
             "--no-sandbox",
             "--disable-dev-shm-usage",
