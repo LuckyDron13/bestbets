@@ -7,6 +7,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -487,9 +492,12 @@ public class PlaywrightWorker implements CommandLineRunner {
     String date = bets.isEmpty() ? "" : nullToEmpty(bets.get(0).date);
     String period = nullToEmpty(h.period);
 
+    String timeUntil = formatTimeUntilGame(date);
+
     StringBuilder sb = new StringBuilder();
-    sb.append("⚡️ ").append(emoji).append(" ").append(nullToEmpty(h.percent)).append(" | ")
-        .append(nullToEmpty(h.sport));
+    sb.append("⚡️ ").append(emoji).append(" ").append(nullToEmpty(h.percent));
+    if (!timeUntil.isBlank()) sb.append(" | ").append(timeUntil);
+    sb.append(" | ").append(nullToEmpty(h.sport));
 
     if (!period.isBlank()) sb.append(" ").append(period);
     sb.append(" | ").append(nullToEmpty(h.updatedAt)).append("\n");
@@ -637,6 +645,37 @@ public class PlaywrightWorker implements CommandLineRunner {
   // =========================
   // Helpers
   // =========================
+
+  private String formatTimeUntilGame(String dateStr) {
+    if (dateStr == null || dateStr.isBlank()) return "";
+    try {
+      LocalDateTime gameTime = null;
+      int year = LocalDate.now().getYear();
+
+      // "dd.MM HH:mm"  →  add current year
+      if (dateStr.matches("\\d{2}\\.\\d{2} \\d{2}:\\d{2}")) {
+        String full = dateStr.substring(0, 5) + "." + year + " " + dateStr.substring(6);
+        gameTime = LocalDateTime.parse(full, DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+      }
+      // "dd.MM.yyyy HH:mm"
+      if (gameTime == null && dateStr.matches("\\d{2}\\.\\d{2}\\.\\d{4} \\d{2}:\\d{2}")) {
+        gameTime = LocalDateTime.parse(dateStr, DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+      }
+
+      if (gameTime == null) return "";
+
+      ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
+      ZonedDateTime game = gameTime.atZone(ZoneId.systemDefault());
+      long totalMinutes = Duration.between(now, game).toMinutes();
+      if (totalMinutes <= 0) return "";
+
+      long hours = totalMinutes / 60;
+      long minutes = totalMinutes % 60;
+      return hours > 0 ? hours + "ч " + minutes + "м" : minutes + "м";
+    } catch (Exception e) {
+      return "";
+    }
+  }
 
   private String safeText(Locator loc) {
     try {
